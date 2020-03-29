@@ -1,0 +1,312 @@
+#include <algorithm>
+//#include <algo>
+#include "maximal.h"
+
+//static definitions
+int MaximalTest::maxcount=0;
+idlist MaximalTest::tmp1;
+idlist MaximalTest::tmp2;
+vector<int> MaximalTest::csuplist;
+
+
+//if lit == -1, don't add lit
+void MaximalTest::add(vector<int> &prefix, int lit, int sup){
+   unsigned int i,j;
+   bool found;
+
+   if (max_diff_type == diffin){
+      for (i=0; i < Dbase_Ctrl_Blk::NumF1; ++i){
+         found = false;
+         for (j=0; j < prefix.size() && !found; ++j)
+            if (i == prefix[j]) found = true;
+
+         if (i == lit || found){
+            ++Dbase_Ctrl_Blk::ParentClass[i]->maxsupport();
+         }
+         else{
+            //i is not equal to any item in prefix or lit
+            Dbase_Ctrl_Blk::ParentClass[i]->maxset.push_back(maxcount);
+         }
+      }
+   }
+   else{
+      //add prefix items
+      for (i=0; i < prefix.size(); ++i){
+         Dbase_Ctrl_Blk::ParentClass[prefix[i]]->maxset.push_back(maxcount);
+         ++Dbase_Ctrl_Blk::ParentClass[prefix[i]]->maxsupport();
+      }
+      //add lit
+      if (lit != -1){
+         Dbase_Ctrl_Blk::ParentClass[lit]->maxset.push_back(maxcount);
+         ++Dbase_Ctrl_Blk::ParentClass[lit]->maxsupport();
+      }
+   }
+
+   //add support of itemset if mining closed sets
+   if (closed_type == cmax){
+      csuplist.push_back(sup);
+   }
+
+   ++maxcount;
+}
+
+//carries out a chain of intersection using tmp idlists
+bool MaximalTest::max_intersect(idlist *l1, idlist *inl2){
+   static bool usetmp1;
+   idlist *res, *l2;
+
+   if (inl2){
+      //new intersetion
+      usetmp1 = true;
+      res = &tmp1;
+      l2 = inl2;
+   }
+   else{
+      //use previous results
+      if (usetmp1){
+         res = &tmp1;
+         l2 = &tmp2;
+      }
+      else{
+         res = &tmp2;
+         l2 = &tmp1;
+      }
+   }
+   res->clear();
+   usetmp1 = !usetmp1;
+
+   insert_iterator<idlist> inserter(*res,res->begin());
+   set_intersection(l1->begin(), l1->end(),
+                    l2->begin(), l2->end(),
+                    inserter);
+
+   //return true if intersection not null
+   if (res->empty()) return false;
+   else return true;
+}
+
+//carries out a chain of union using tmp idlists
+bool MaximalTest::max_union(int sup, idlist *l1, idlist *&res){
+   static bool usetmp1;
+   idlist *l2;
+
+   if (res == NULL){
+      //first call
+      usetmp1 = true;
+      res = &tmp1;
+      l2 = &tmp2;
+      l2->clear();
+   }
+   else{
+      //use previous results
+      if (usetmp1){
+         res = &tmp1;
+         l2 = &tmp2;
+      }
+      else{
+         res = &tmp2;
+         l2 = &tmp1;
+      }
+   }
+
+   res->clear();
+   usetmp1 = !usetmp1;
+
+   insert_iterator<idlist> unioner(*res,res->begin());
+   set_union(l1->begin(), l1->end(), l2->begin(), l2->end(), unioner);
+
+   //return true if intersection not null
+   return true;
+}
+
+int MaximalTest::max_diff(idlist *l1, idlist *l2){
+   static bool usetmp1;
+
+   idlist *res;
+
+   if (l1){
+      //new intersetion
+      usetmp1 = true;
+      res = &tmp1;
+   }
+   else{
+      //use previous results
+      if (usetmp1){
+         res = &tmp1;
+         l1 = &tmp2;
+      }
+      else{
+         res = &tmp2;
+         l1 = &tmp1;
+      }
+   }
+   res->clear();
+   usetmp1 = !usetmp1;
+
+   insert_iterator<idlist> differ(*res,res->begin());
+   set_difference(l1->begin(), l1->end(),
+                    l2->begin(), l2->end(),
+                    differ);
+
+
+   //return true if intersection not null
+   //tmpsup = tmpsup - res->size();
+   //cout << "IN DIFF " << *l1 << " xx " << *l2 << " yy " << *res
+   //     << " -- " << tmpsup << endl;
+
+   return res->size();
+}
+
+
+//insert elements in newmax to all nodes' maxset in eq
+bool MaximalTest::update_maxset(list<Eqnode *>::iterator ni, Eqclass *eq,
+                                idlist &newmax, unsigned int nmaxpos,
+                                bool &subset)
+{
+   bool res, bsrch;
+   unsigned int i, totsup=0;
+   idlist *iteml;
+   list<Eqnode *>::iterator nj;
+
+   //insert newmax into all nodes' maxset
+   res = false; //check if any maxset is empty
+   if (newmax.size() > nmaxpos){
+      for(nj = ni; nj != eq->nlist().end(); ++nj){
+         iteml = &Dbase_Ctrl_Blk::ParentClass[(*nj)->val]->maxset;
+         for (i=nmaxpos; i < newmax.size(); ++i){
+            bsrch = binary_search(iteml->begin(), iteml->end(), newmax[i]);
+            if (max_diff_type == nodiff){
+               if (bsrch){
+                  (*nj)->maxset.push_back(newmax[i]);
+                  ++(*nj)->maxsupport();
+               }
+               //if (nj == ni) totsup = (*ni)->maxsupport();
+               //else totsup -= (*nj)->maxset.size();
+            }
+            else{
+               if (max_diff_type == diffin){
+                  if (bsrch) (*nj)->maxset.push_back(newmax[i]);
+                  else ++(*nj)->maxsupport();
+               }
+               else{
+                  if (bsrch) ++(*nj)->maxsupport();
+                  else (*nj)->maxset.push_back(newmax[i]);
+               }
+               if (nj == ni) totsup = (*ni)->maxsupport();
+               else totsup -= (*nj)->maxset.size();
+            }
+         }
+
+         if ((*nj)->maxsupport() == 0) res = true;
+      }
+   }
+
+   if (totsup > 0) subset =true;
+   else subset = false;
+
+   //one of the maxsup is 0, intersection must be null
+   if (res) return false;
+   else return true;
+}
+
+//intersect maxsets of all nodes, return true if non-empty
+bool MaximalTest::subset_test(list<Eqnode *>::iterator ni, Eqclass *eq){
+   bool res = true;
+   list<Eqnode *>::iterator nj, nk;
+
+   bool firstjoin = true;
+
+   if (max_diff_type == nodiff){
+      nj = ni;
+      for(++nj; nj != eq->nlist().end(); ++nj){
+         if (firstjoin){
+            firstjoin = false;
+            res = max_intersect(&(*ni)->maxset, &(*nj)->maxset);
+         }
+         else res = max_intersect(&(*nj)->maxset);
+      }
+      if (!res) return false;
+   }
+   else{
+      int totsup = (*ni)->maxsupport();
+      int ressup = 0;
+      nj = ni;
+      for(++nj; nj != eq->nlist().end(); ++nj){
+         firstjoin = true;
+         for (nk = ni; nk != nj; ++nk){
+            if (firstjoin){
+               firstjoin = false;
+               ressup = max_diff(&(*nj)->maxset, &(*nk)->maxset);
+            }
+            else
+               ressup = max_diff(NULL, &(*nk)->maxset);
+         }
+         totsup -= ressup;
+         if (totsup <= 0) return false;
+      }
+   }
+
+   if (firstjoin && (*ni)->maxsupport() == 0) return false;
+   return true;
+}
+
+
+//intersect maxsets of all nodes, return true if non-empty
+bool MaximalTest::subset_test_f2(Eqclass *eq){
+   static vector<Eqnode *> *parclass = &Dbase_Ctrl_Blk::ParentClass;
+   bool res = true;
+   list<Eqnode *>::iterator ni, nj, nk;
+   idlist *l1, *l2;
+
+   bool firstjoin = true;
+
+   if (eq->nlist().empty()) return false;
+
+   ni = eq->nlist().begin();
+   l1 = &(*parclass)[eq->prefix()[0]]->maxset;
+   if (max_diff_type == nodiff){
+      nj = ni;
+      for(; nj != eq->nlist().end(); ++nj){
+         l2 = &(*parclass)[(*nj)->val]->maxset;
+         if (firstjoin){
+            firstjoin = false;
+            res = max_intersect(l1, l2);
+         }
+         else res = max_intersect(l2);
+      }
+      if (!res) return false;
+   }
+   else{
+      //not correct yet!!!
+      l1 = &(*parclass)[eq->prefix()[0]]->maxset;
+      int totsup = (*parclass)[eq->prefix()[0]]->maxsupport();
+      int ressup = 0;
+      nj = ni;
+      for(; nj != eq->nlist().end(); ++nj){
+         firstjoin = true;
+         for (nk = ni; nk != nj; ++nk){
+            l2 = &(*parclass)[(*nk)->val]->maxset;
+            if (firstjoin){
+               firstjoin = false;
+               ressup = max_diff(l1, l2);
+            }
+            else
+               ressup = max_diff(NULL, l2);
+         }
+         totsup -= ressup;
+         if (totsup <= 0) return false;
+      }
+   }
+
+   if (firstjoin && (*ni)->maxsupport() == 0) return false;
+   return true;
+}
+
+bool MaximalTest::check_closed(Eqnode *eqn)
+{
+   int i;
+   //works only for diffset format maxset
+   for (i=0; i < eqn->maxset.size(); ++i)
+      if (csuplist[eqn->maxset[i]] == eqn->sup) return false;
+   return true;
+}
